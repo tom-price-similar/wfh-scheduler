@@ -297,6 +297,48 @@
             font-size: 0.7rem;
         }
 
+        .leave-zone {
+            min-height: 80px;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(168, 85, 247, 0.1);
+            border: 2px dashed rgba(168, 85, 247, 0.3);
+            margin-top: 10px;
+        }
+
+        .leave-zone h3 {
+            font-size: 0.75rem;
+            color: #a855f7;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .leave-zone .person {
+            background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+            margin-bottom: 8px;
+            padding: 8px 12px;
+        }
+
+        .leave-zone .person:hover {
+            box-shadow: 0 5px 20px rgba(168, 85, 247, 0.4);
+        }
+
+        .leave-zone .person-avatar {
+            width: 28px;
+            height: 28px;
+            font-size: 0.7rem;
+        }
+
+        .leave-zone .person-name {
+            font-size: 0.8rem;
+        }
+
+        .day-column.drag-over-leave {
+            border-color: #a855f7;
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.3);
+        }
+
         .instructions {
             text-align: center;
             padding: 20px;
@@ -405,6 +447,8 @@
 
         // State: person -> array of WFH days
         let wfhSchedule = {};
+        // State: person -> array of leave days
+        let leaveSchedule = {};
 
         function getInitials(name) {
             return name.split(' ').map(n => n[0]).join('').substring(0, 2);
@@ -449,7 +493,18 @@
         function handleDragStart(e) {
             e.target.classList.add('dragging');
             e.dataTransfer.setData('text/plain', e.target.dataset.name);
-            e.dataTransfer.setData('source', e.target.closest('.wfh-zone')?.dataset.day || 'pool');
+            const wfhZone = e.target.closest('.wfh-zone');
+            const leaveZone = e.target.closest('.leave-zone');
+            if (wfhZone) {
+                e.dataTransfer.setData('source', wfhZone.dataset.day);
+                e.dataTransfer.setData('sourceType', 'wfh');
+            } else if (leaveZone) {
+                e.dataTransfer.setData('source', leaveZone.dataset.day);
+                e.dataTransfer.setData('sourceType', 'leave');
+            } else {
+                e.dataTransfer.setData('source', 'pool');
+                e.dataTransfer.setData('sourceType', 'pool');
+            }
         }
 
         function handleDragEnd(e) {
@@ -458,16 +513,23 @@
 
         function handleDragOver(e) {
             e.preventDefault();
-            const zone = e.target.closest('.wfh-zone');
-            if (zone) {
-                zone.closest('.day-column').classList.add('drag-over');
+            const wfhZone = e.target.closest('.wfh-zone');
+            const leaveZone = e.target.closest('.leave-zone');
+            if (wfhZone) {
+                wfhZone.closest('.day-column').classList.add('drag-over');
+            } else if (leaveZone) {
+                leaveZone.closest('.day-column').classList.add('drag-over-leave');
             }
         }
 
         function handleDragLeave(e) {
-            const zone = e.target.closest('.wfh-zone');
-            if (zone && !zone.contains(e.relatedTarget)) {
-                zone.closest('.day-column').classList.remove('drag-over');
+            const wfhZone = e.target.closest('.wfh-zone');
+            const leaveZone = e.target.closest('.leave-zone');
+            if (wfhZone && !wfhZone.contains(e.relatedTarget)) {
+                wfhZone.closest('.day-column').classList.remove('drag-over');
+            }
+            if (leaveZone && !leaveZone.contains(e.relatedTarget)) {
+                leaveZone.closest('.day-column').classList.remove('drag-over-leave');
             }
         }
 
@@ -475,9 +537,13 @@
             e.preventDefault();
             const name = e.dataTransfer.getData('text/plain');
             const sourceDay = e.dataTransfer.getData('source');
+            const sourceType = e.dataTransfer.getData('sourceType');
             const targetZone = e.target.closest('.wfh-zone');
 
-            document.querySelectorAll('.day-column').forEach(col => col.classList.remove('drag-over'));
+            document.querySelectorAll('.day-column').forEach(col => {
+                col.classList.remove('drag-over');
+                col.classList.remove('drag-over-leave');
+            });
 
             if (!targetZone) return;
 
@@ -486,19 +552,29 @@
             if (!wfhSchedule[name]) {
                 wfhSchedule[name] = [];
             }
-
-            // Remove from source day if coming from another day
-            if (sourceDay !== 'pool' && sourceDay !== targetDay) {
-                wfhSchedule[name] = wfhSchedule[name].filter(d => d !== sourceDay);
+            if (!leaveSchedule[name]) {
+                leaveSchedule[name] = [];
             }
 
-            // Check if already on this day
+            // Remove from source if coming from another zone
+            if (sourceType === 'wfh' && sourceDay !== targetDay) {
+                wfhSchedule[name] = wfhSchedule[name].filter(d => d !== sourceDay);
+            } else if (sourceType === 'leave') {
+                leaveSchedule[name] = leaveSchedule[name].filter(d => d !== sourceDay);
+            }
+
+            // Check if already WFH on this day
             if (wfhSchedule[name].includes(targetDay)) {
                 return;
             }
 
-            // Check if already has 2 WFH days
-            if (wfhSchedule[name].length >= 2 && sourceDay === 'pool') {
+            // If on leave this day, remove from leave first
+            if (leaveSchedule[name].includes(targetDay)) {
+                leaveSchedule[name] = leaveSchedule[name].filter(d => d !== targetDay);
+            }
+
+            // Check if already has 2 WFH days (only if not moving from another WFH day)
+            if (wfhSchedule[name].length >= 2 && sourceType !== 'wfh') {
                 showError(`${name} already has 2 WFH days assigned!`);
                 return;
             }
@@ -510,44 +586,112 @@
             render();
         }
 
+        function handleLeaveDrop(e) {
+            e.preventDefault();
+            const name = e.dataTransfer.getData('text/plain');
+            const sourceDay = e.dataTransfer.getData('source');
+            const sourceType = e.dataTransfer.getData('sourceType');
+            const targetZone = e.target.closest('.leave-zone');
+
+            document.querySelectorAll('.day-column').forEach(col => {
+                col.classList.remove('drag-over');
+                col.classList.remove('drag-over-leave');
+            });
+
+            if (!targetZone) return;
+
+            const targetDay = targetZone.dataset.day;
+
+            if (!leaveSchedule[name]) {
+                leaveSchedule[name] = [];
+            }
+            if (!wfhSchedule[name]) {
+                wfhSchedule[name] = [];
+            }
+
+            // Remove from source if coming from another zone
+            if (sourceType === 'leave' && sourceDay !== targetDay) {
+                leaveSchedule[name] = leaveSchedule[name].filter(d => d !== sourceDay);
+            } else if (sourceType === 'wfh') {
+                wfhSchedule[name] = wfhSchedule[name].filter(d => d !== sourceDay);
+            }
+
+            // Check if already on leave this day
+            if (leaveSchedule[name].includes(targetDay)) {
+                return;
+            }
+
+            // If WFH this day, remove from WFH (leave takes priority)
+            if (wfhSchedule[name].includes(targetDay)) {
+                wfhSchedule[name] = wfhSchedule[name].filter(d => d !== targetDay);
+            }
+
+            // Add to leave
+            leaveSchedule[name].push(targetDay);
+
+            saveState();
+            render();
+        }
+
         function handlePoolDrop(e) {
             e.preventDefault();
             const name = e.dataTransfer.getData('text/plain');
             const sourceDay = e.dataTransfer.getData('source');
+            const sourceType = e.dataTransfer.getData('sourceType');
 
-            if (sourceDay !== 'pool') {
+            if (sourceType === 'wfh') {
                 wfhSchedule[name] = wfhSchedule[name].filter(d => d !== sourceDay);
+                saveState();
+                render();
+            } else if (sourceType === 'leave') {
+                leaveSchedule[name] = leaveSchedule[name].filter(d => d !== sourceDay);
                 saveState();
                 render();
             }
         }
 
         function getOfficeCount(day) {
-            let wfhCount = 0;
-            for (const person in wfhSchedule) {
-                if (wfhSchedule[person].includes(day)) {
-                    wfhCount++;
+            let notInOfficeCount = 0;
+            let onLeaveCount = 0;
+
+            // Count people on leave
+            for (const person in leaveSchedule) {
+                if (leaveSchedule[person].includes(day)) {
+                    notInOfficeCount++;
+                    onLeaveCount++;
                 }
             }
-            return people.length - wfhCount;
+
+            // Count people WFH (but not on leave)
+            for (const person in wfhSchedule) {
+                if (wfhSchedule[person].includes(day) &&
+                    (!leaveSchedule[person] || !leaveSchedule[person].includes(day))) {
+                    notInOfficeCount++;
+                }
+            }
+
+            return {
+                inOffice: people.length - notInOfficeCount,
+                onLeave: onLeaveCount
+            };
         }
 
         function renderDashboard() {
             const dashboard = document.getElementById('dashboard');
-            const counts = days.map(day => ({ day, count: getOfficeCount(day) }));
-            const maxCount = Math.max(...counts.map(c => c.count));
-            const minCount = Math.min(...counts.map(c => c.count));
+            const counts = days.map(day => ({ day, ...getOfficeCount(day) }));
+            const maxCount = Math.max(...counts.map(c => c.inOffice));
+            const minCount = Math.min(...counts.map(c => c.inOffice));
 
-            dashboard.innerHTML = counts.map(({ day, count }) => {
+            dashboard.innerHTML = counts.map(({ day, inOffice, onLeave }) => {
                 let className = 'stat-card';
-                if (count === maxCount && maxCount !== minCount) className += ' best';
-                if (count === minCount && maxCount !== minCount) className += ' worst';
+                if (inOffice === maxCount && maxCount !== minCount) className += ' best';
+                if (inOffice === minCount && maxCount !== minCount) className += ' worst';
 
                 return `
                     <div class="${className}">
                         <div class="stat-day">${day}</div>
-                        <div class="stat-count">${count}</div>
-                        <div class="stat-label">in office</div>
+                        <div class="stat-count">${inOffice}</div>
+                        <div class="stat-label">in office${onLeave > 0 ? ` (${onLeave} on leave)` : ''}</div>
                     </div>
                 `;
             }).join('');
@@ -572,33 +716,40 @@
             schedule.innerHTML = '';
 
             days.forEach(day => {
-                const officeCount = getOfficeCount(day);
-                const counts = days.map(d => getOfficeCount(d));
+                const { inOffice, onLeave } = getOfficeCount(day);
+                const counts = days.map(d => getOfficeCount(d).inOffice);
                 const maxCount = Math.max(...counts);
                 const minCount = Math.min(...counts);
 
                 let countClass = '';
-                if (officeCount === maxCount && maxCount !== minCount) countClass = 'high';
-                if (officeCount === minCount && maxCount !== minCount) countClass = 'low';
+                if (inOffice === maxCount && maxCount !== minCount) countClass = 'high';
+                if (inOffice === minCount && maxCount !== minCount) countClass = 'low';
 
                 const column = document.createElement('div');
                 column.className = 'day-column';
 
-                // Get people WFH on this day
-                const wfhPeople = people.filter(name =>
-                    wfhSchedule[name] && wfhSchedule[name].includes(day)
+                // Get people on leave this day
+                const leavePeople = people.filter(name =>
+                    leaveSchedule[name] && leaveSchedule[name].includes(day)
                 );
 
-                // Get people in office on this day
+                // Get people WFH on this day (but not on leave)
+                const wfhPeople = people.filter(name =>
+                    wfhSchedule[name] && wfhSchedule[name].includes(day) &&
+                    (!leaveSchedule[name] || !leaveSchedule[name].includes(day))
+                );
+
+                // Get people in office on this day (not WFH and not on leave)
                 const officePeople = people.filter(name =>
-                    !wfhSchedule[name] || !wfhSchedule[name].includes(day)
+                    (!wfhSchedule[name] || !wfhSchedule[name].includes(day)) &&
+                    (!leaveSchedule[name] || !leaveSchedule[name].includes(day))
                 );
 
                 column.innerHTML = `
                     <div class="day-header">
                         <div class="day-name">${day}</div>
                         <div class="day-count ${countClass}">
-                            🏢 ${officeCount} in office
+                            🏢 ${inOffice} in office
                         </div>
                     </div>
                     <div class="wfh-zone" data-day="${day}">
@@ -609,6 +760,9 @@
                         ${officePeople.map(name => `
                             <div class="office-person">${name}</div>
                         `).join('')}
+                    </div>
+                    <div class="leave-zone" data-day="${day}">
+                        <h3>✈️ On Leave (${leavePeople.length})</h3>
                     </div>
                 `;
 
@@ -621,18 +775,32 @@
                 wfhZone.addEventListener('dragleave', handleDragLeave);
                 wfhZone.addEventListener('drop', handleDrop);
 
+                const leaveZone = column.querySelector('.leave-zone');
+                leavePeople.forEach(name => {
+                    leaveZone.appendChild(createPersonElement(name, true));
+                });
+
+                leaveZone.addEventListener('dragover', handleDragOver);
+                leaveZone.addEventListener('dragleave', handleDragLeave);
+                leaveZone.addEventListener('drop', handleLeaveDrop);
+
                 schedule.appendChild(column);
             });
         }
 
         function saveState() {
             localStorage.setItem('wfhSchedule', JSON.stringify(wfhSchedule));
+            localStorage.setItem('leaveSchedule', JSON.stringify(leaveSchedule));
         }
 
         function loadState() {
-            const saved = localStorage.getItem('wfhSchedule');
-            if (saved) {
-                wfhSchedule = JSON.parse(saved);
+            const savedWfh = localStorage.getItem('wfhSchedule');
+            if (savedWfh) {
+                wfhSchedule = JSON.parse(savedWfh);
+            }
+            const savedLeave = localStorage.getItem('leaveSchedule');
+            if (savedLeave) {
+                leaveSchedule = JSON.parse(savedLeave);
             }
         }
 
